@@ -1,0 +1,290 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:description: This document includes the steps needed to be taken by the release manager to create a successful release candidate.
+[[CreatingARelease]]
+= Creating a release
+
+This document includes the steps needed to be taken by the release manager to create a successful release candidate.
+
+== Creating a release branch
+
+first step is to create a new release branch.
+The branch must follow following naming pattern `releaseX.XX` where `X.XX` is the release version number.
+
+In this example upstream is the apache/hop github repository
+
+[source,bash]
+----
+git branch releaseX.XX upstream/master
+git checkout releaseX.XX
+git push upstream releaseX.XX:releaseX.XX
+----
+
+== update the version of the poms
+
+[source,bash]
+----
+mvn versions:set -DnewVersion=X.XX -DgenerateBackupPoms=false
+----
+
+== check for missing replaced poms
+check the source code and search for X.XX-SNAPSHOT and replace it by X.XX
+
+== correctly set the documentation version
+Update following files and set the correct documentation version and name
+
+* docs/hop-user-manual/antora.yml
+* docs/hop-tech-manual/antora.yml
+* docs/hop-dev-manual/antora.yml
+
+Remove the `prerelease` and `display_version` attributes
+
+== commit the changed version and add tag
+
+Next up checking in the changes and adding a release tag.
+
+[source,bash]
+----
+git add .
+git commit -m 'Create release version x.xx'
+git push upstream releaseX.XX:releaseX.XX
+
+git tag -a X.XX-rcX
+git push upstream tag X.XX-rcX
+----
+start numbering the rc with 1 (rc1)
+
+== Creating the release artifacts
+
+Checkout the tag to a clean folder to avoid files that are ignored by git and remove the git folder.
+Next up is creating the tar.gz file
+
+[source,bash]
+----
+git clone --depth 1 --branch X.XX-rcX https://github.com/apache/hop.git apache-hop-X.XX
+rm -rf apache-hop-X.XX/.git
+tar -czvf apache-hop-X.XX-src.tar.gz apache-hop-X.XX
+----
+
+== Sign the artifacts
+
+This part assumes you already have created and registered keys to sign the artifacts, for more information on creating and adding your keys see <<CreatingAKey,here>>
+
+[source,bash]
+----
+gpg --armor --default-key username@apache.org --output apache-hop-X.XX-src.tar.gz.asc --detach-sig apache-hop-X.XX-src.tar.gz
+sha512sum apache-hop-X.XX-src.tar.gz > apache-hop-X.XX-src.tar.gz.sha512
+
+# Validate
+gpg --verify apache-hop-X.XX-src.tar.gz.asc
+sha512sum -c apache-hop-X.XX-src.tar.gz.sha512
+----
+
+== Creating the client
+
+The client included in the release has to be build using the source code in the release.
+Use the source you just prepared to generate the client.
+
+[source,bash]
+----
+# Copy source to temp build location
+cd apache-hop-X.XX/
+
+# Run Build
+mvn -T 4 clean install -DskipTests=true
+
+# Copy client back (and rename)
+cp assemblies/client/target/hop-client-X.XX.zip ../apache-hop-client-X.XX.zip
+
+# Go back to root of your working dir
+cd ..
+----
+
+As we now added a new binary file we also need to sign and create a sha512 for it.
+
+[source,bash]
+----
+# Create keyfile and sha512
+gpg --armor --default-key username@apache.org --output apache-hop-client-X.XX.zip.asc --detach-sig apache-hop-client-X.XX.zip
+sha512sum apache-hop-client-X.XX.zip > apache-hop-client-X.XX.zip.sha512
+
+# Validate
+gpg --verify apache-hop-client-X.XX.zip.asc
+sha512sum -c apache-hop-client-X.XX.zip.sha512
+----
+
+== Creating the Helm chart (if needed)
+
+When changes have been made to the helm chart a new release of this artifact is also needed.
+This assumes helm has been installed.
+
+[source,bash]
+----
+# Copy source to temp build location
+cd apache-hop-X.XX/helm
+
+# Run helm package
+helm package hop
+
+# Copy client back (and rename)
+cp hop-X.XX.tgz ../../hop-X.XX.tgz
+
+# Go back to root of your working dir
+cd ../..
+----
+
+As we now added a new binary file we also need to sign and create a sha512 for it.
+
+[source,bash]
+----
+# Create keyfile and sha512
+gpg --armor --default-key username@apache.org --output hop-X.XX.tgz.asc --detach-sig hop-X.XX.tgz
+sha512sum hop-X.XX.tgz > hop-X.XX.tgz.sha512
+
+# Validate
+gpg --verify hop-X.XX.tgz.asc
+sha512sum -c hop-X.XX.tgz.sha512
+----
+
+== Staging the files
+
+First step is to check out the SVN directory, and create a new directory
+
+[source,bash]
+----
+svn co https://dist.apache.org/repos/dist/dev/hop hop_release
+cd hop_release
+svn mkdir apache-hop-x.xx-rcx
+----
+
+Now copy over the following files in this new directory
+
+[source,bash]
+----
+apache-hop-X.XX-src.tar.gz.sha512
+apache-hop-X.XX-src.tar.gz.asc
+apache-hop-X.XX-src.tar.gz
+apache-hop-client-X.XX.zip.sha512
+apache-hop-client-X.XX.zip.asc
+apache-hop-client-X.XX.zip
+----
+
+Add and commit the files to svn
+
+[source,bash]
+----
+cd apache-hop-x.xx-rcx
+svn add *
+svn status
+svn commit -m 'Add release files for Apache hop X.XX-rcX'
+----
+
+Check if the files are uploaded https://dist.apache.org/repos/dist/dev/hop/[here]
+
+== Send mail to dev list to announce new release candidate
+
+Mail Template
+
+----
+Subject: [VOTE] Release Apache Hop X.XX-rcX
+TO: dev@hop.apache.org
+
+Hi All,
+
+<INCLUDE SOME TEXT>
+
+Build instructions can be found in the README included.
+
+The tag to be voted on is X.XX-rcX <REPLACE TAG> (commit <COMMIT HASH>):
+<URL TO TAG COMMIT>
+
+The release files, including signatures, digests, etc. can be found at:
+<INCLUDE URL TO DIST RC FOLDER>
+https://dist.apache.org/repos/dist/dev/hop/apache-hop-X.XX-rcX/
+
+The SHA512 Checksum for these artifacts is:
+<INCLUDE CHECKSUM FROM SHA512 file>
+
+Release artifacts are signed with the following key:
+<ADD URL TO YOUR KEY ON A PUBLIC KEYSERVER>
+
+For more information about the contents of this release, see:
+<ADD URL TO RELEASE IN GITHUB>
+
+Please vote on releasing this package as Apache Hop X.XX!
+
+The vote is open for 72 hours and passes if
+a majority of at least 3 +1 PMC votes are cast.
+
+[ ] +1 Release this package as Apache Hop X.XX
+[ ] +0 No opinion
+[ ] -1 Do not release this package because ...
+
+Best Regards,
+<YOUR NAME>
+
+----
+
+== Send a result mail to the dev mailing list
+
+----
+Subject: [RESULT] [VOTE] Release Apache Hop X.XX-rcX
+TO: dev@hop.apache.org
+
+Hello Team,
+
+The vote to release Apache Hop X.XX - RCX has passed/failed.
+
++1 (binding):
+
++1 (non-binding)
+
++0
+
+-1 (binding)
+
+-1 (non-binding)
+
+Thank you for reviewing this release candidate.
+
+Cheers,
+<YOUR NAME>
+----
+
+== [[CreatingAKey]]Creating a key
+
+To generate and publish a key follow these steps, it is recommended to use your apache email as key alias.
+
+[source,bash]
+----
+gpg --gen-key
+gpg -k <username>@apache.org
+# get the ID for your key
+gpg --send-keys --keyserver php.mit.edu <KEY ID>
+gpg --send-keys --keyserver keyserver.ubuntu.com <KEY ID>
+----
+
+Next step is to add your key to the key file in the Apache SVN repository.
+
+[source,bash]
+----
+svn co https://dist.apache.org/repos/dist/dev/hop hop_release
+cd hop_release
+gpg --list-sigs <keyID> >> KEYS
+gpg  --armor --export <keyID> >> KEYS
+svn commit -m "added new public key to KEYS file"
+----
